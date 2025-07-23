@@ -13,6 +13,7 @@ pub struct Block {
     pub name: String,
     pub dimensions: Vec<Dimension>,
     pub measures: Vec<Measure>,
+    pub auth_filter_field: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

@@ -1,5 +1,6 @@
 [[block]]
 name = "sales"
+auth_filter_field = "organization_id"
 
   [[block.dimensions]]
   name = "product"

@@ -1,20 +1,19 @@
+use crate::query;
+use crate::schema::Block;
+use axum::extract::FromRequestParts;
+use axum::http::request::Parts;
 use axum::{
+    Json, Router,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Json,
-    Router,
 };
-use crate::schema::Block;
-use crate::query;
+use jsonwebtoken::{DecodingKey, Validation, decode};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
-use axum::extract::FromRequestParts;
-use axum::http::request::Parts;
-use jsonwebtoken::{decode, DecodingKey, Validation};
 
 #[derive(Debug, Deserialize)]
 pub struct QueryRequest {
@@ -25,16 +24,13 @@ pub struct QueryRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Claims {
-    pub user_id: String,
-    exp: usize,
-}
+pub struct Claims(serde_json::Map<String, serde_json::Value>);
 
 pub struct AuthContext {
-    pub user_id: String,
+    pub claims: Claims,
 }
 
-const JWT_SECRET: &[u8] = b"your-secret-key"; // TODO: Load from environment variable
+const JWT_SECRET: &[u8] = b"a-string-secret-at-least-256-bits-long"; // TODO: Load from environment variable
 
 impl<S> FromRequestParts<S> for AuthContext
 where
@@ -44,7 +40,9 @@ where
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let headers = &parts.headers;
-        let auth_header = headers.get("authorization").and_then(|value| value.to_str().ok());
+        let auth_header = headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok());
 
         let token = if let Some(header) = auth_header {
             if header.starts_with("Bearer ") {
@@ -62,14 +60,16 @@ where
         let decoding_key = DecodingKey::from_secret(JWT_SECRET);
 
         match decode::<Claims>(&token, &decoding_key, &validation) {
-            Ok(token_data) => Ok(AuthContext { user_id: token_data.claims.user_id }),
+            Ok(token_data) => Ok(AuthContext {
+                claims: token_data.claims,
+            }),
             Err(_) => Err((StatusCode::UNAUTHORIZED, "Invalid token".to_string())),
         }
     }
 }
 
 async fn query_handler(
-    AuthContext { user_id }: AuthContext,
+    AuthContext { claims }: AuthContext,
     State(blocks_state): State<Arc<RwLock<HashMap<String, Block>>>>,
     Json(query_request): Json<QueryRequest>,
 ) -> impl IntoResponse {
@@ -81,13 +81,35 @@ async fn query_handler(
         }
     };
 
+    let auth_filter_field = full_block_definition.auth_filter_field.clone();
+    let mut auth_filter_value: Option<String> = None;
+
+    if let Some(filter_field_name) = &auth_filter_field {
+        if let Some(filter_value) = claims.0.get(filter_field_name) {
+            if let Some(s) = filter_value.as_str() {
+                auth_filter_value = Some(s.to_string());
+            }
+        }
+    }
+
     let mut requested_dimensions = Vec::new();
     if let Some(dims) = query_request.dimensions {
         for dim_name in dims {
-            if let Some(dim) = full_block_definition.dimensions.iter().find(|d| d.name == dim_name) {
+            if let Some(dim) = full_block_definition
+                .dimensions
+                .iter()
+                .find(|d| d.name == dim_name)
+            {
                 requested_dimensions.push(dim.clone());
             } else {
-                return (StatusCode::BAD_REQUEST, format!("Dimension '{}' not found in block '{}'", dim_name, query_request.name)).into_response();
+                return (
+                    StatusCode::BAD_REQUEST,
+                    format!(
+                        "Dimension '{}' not found in block '{}'",
+                        dim_name, query_request.name
+                    ),
+                )
+                    .into_response();
             }
         }
     }
@@ -95,10 +117,21 @@ async fn query_handler(
     let mut requested_measures = Vec::new();
     if let Some(meas) = query_request.measures {
         for measure_name in meas {
-            if let Some(measure) = full_block_definition.measures.iter().find(|m| m.name == measure_name) {
+            if let Some(measure) = full_block_definition
+                .measures
+                .iter()
+                .find(|m| m.name == measure_name)
+            {
                 requested_measures.push(measure.clone());
             } else {
-                return (StatusCode::BAD_REQUEST, format!("Measure '{}' not found in block '{}'", measure_name, query_request.name)).into_response();
+                return (
+                    StatusCode::BAD_REQUEST,
+                    format!(
+                        "Measure '{}' not found in block '{}'",
+                        measure_name, query_request.name
+                    ),
+                )
+                    .into_response();
             }
         }
     }
@@ -107,22 +140,29 @@ async fn query_handler(
         name: query_request.name,
         dimensions: requested_dimensions,
         measures: requested_measures,
+        auth_filter_field: full_block_definition.auth_filter_field.clone(),
     };
 
-    let query = query::build_query(&block_for_query, Some(&user_id));
+    let query = query::build_query(
+        &block_for_query,
+        auth_filter_field.as_deref(),
+        auth_filter_value.as_deref(),
+    );
     let clickhouse_client = reqwest::Client::new();
 
-    let response = match clickhouse_client.post("http://localhost:8123")
+    let response = match clickhouse_client
+        .post("http://localhost:8123")
         .body(format!("{} FORMAT JSON", query))
         .header("X-ClickHouse-User", "default")
         .header("X-ClickHouse-Key", "password")
         .send()
-        .await {
-            Ok(response) => response,
-            Err(e) => {
-                return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-            }
-        };
+        .await
+    {
+        Ok(response) => response,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
+    };
 
     let data = match response.json::<Value>().await {
         Ok(mut data) => {
@@ -134,7 +174,7 @@ async fn query_handler(
                 }
             }
             data
-        },
+        }
         Err(e) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
         }
@@ -178,3 +218,4 @@ pub fn create_router(blocks: Arc<RwLock<HashMap<String, Block>>>) -> Router {
         .route("/schema", get(get_schema_handler))
         .with_state(blocks)
 }
+
