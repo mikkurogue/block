@@ -1,0 +1,25 @@
+[[block]]
+name = "sales"
+
+  [[block.dimensions]]
+  name = "product"
+  sql = "product"
+  data_type = "String"
+
+  [[block.dimensions]]
+  name = "category"
+  sql = "category"
+  data_type = "String"
+
+  [[block.dimensions]]
+  name = "sale_date"
+  sql = "sale_date"
+  data_type = "Date"
+
+  [[block.measures]]
+  name = "total_quantity"
+  sql = "sum(quantity)"
+
+  [[block.measures]]
+  name = "total_revenue"
+  sql = "sum(price * quantity)"
