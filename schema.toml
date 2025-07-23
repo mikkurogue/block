@@ -4,17 +4,17 @@ name = "sales"
   [[block.dimensions]]
   name = "product"
   sql = "product"
-  data_type = "String"
+  data_type = "string"
 
   [[block.dimensions]]
   name = "category"
   sql = "category"
-  data_type = "String"
+  data_type = "string"
 
   [[block.dimensions]]
   name = "sale_date"
   sql = "sale_date"
-  data_type = "Date"
+  data_type = "date"
 
   [[block.measures]]
   name = "total_quantity"
