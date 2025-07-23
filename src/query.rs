@@ -1,6 +1,6 @@
 use crate::schema::{Block, DataType};
 
-pub fn build_query(block: &Block) -> String {
+pub fn build_query(block: &Block, user_id: Option<&str>) -> String {
     let mut select_fields = Vec::new();
 
     let dimensions_sql = block.dimensions.iter()
@@ -27,6 +27,10 @@ pub fn build_query(block: &Block) -> String {
     let select_clause = select_fields.join(", ");
 
     let mut query = format!("SELECT {} FROM {}", select_clause, block.name);
+
+    if let Some(user_id) = user_id {
+        query.push_str(&format!(" WHERE user_id = '{}'", user_id));
+    }
 
     if !block.dimensions.is_empty() {
         let group_by = block.dimensions.iter()

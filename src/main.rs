@@ -5,7 +5,7 @@ mod api;
 use anyhow::Result;
 use std::{collections::HashMap, fs, sync::{Arc, RwLock}, path::PathBuf};
 use schema::Block;
-use notify::{Watcher, RecursiveMode, Config};
+use notify::{Watcher, RecursiveMode};
 
 #[tokio::main]
 async fn main() -> Result<()> {
