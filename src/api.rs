@@ -11,39 +11,47 @@ use crate::query;
 use serde_json::Value;
 use std::collections::HashMap;
 use serde::Deserialize;
+use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Deserialize)]
 pub struct QueryRequest {
     pub name: String,
-    pub dimensions: Vec<String>,
-    pub measures: Vec<String>,
+    pub dimensions: Option<Vec<String>>,
+    pub measures: Option<Vec<String>>,
     pub include_meta: Option<bool>,
 }
 
 async fn query_handler(
-    State(blocks): State<HashMap<String, Block>>,
+    State(blocks_state): State<Arc<RwLock<HashMap<String, Block>>>>,
     Json(query_request): Json<QueryRequest>,
 ) -> impl IntoResponse {
-    let full_block_definition = match blocks.get(&query_request.name) {
-        Some(b) => b,
-        None => return (StatusCode::NOT_FOUND, "Block not found".to_string()).into_response(),
+    let full_block_definition = {
+        let blocks = blocks_state.read().unwrap();
+        match blocks.get(&query_request.name) {
+            Some(b) => b.clone(),
+            None => return (StatusCode::NOT_FOUND, "Block not found".to_string()).into_response(),
+        }
     };
 
     let mut requested_dimensions = Vec::new();
-    for dim_name in query_request.dimensions {
-        if let Some(dim) = full_block_definition.dimensions.iter().find(|d| d.name == dim_name) {
-            requested_dimensions.push(dim.clone());
-        } else {
-            return (StatusCode::BAD_REQUEST, format!("Dimension '{}' not found in block '{}'", dim_name, query_request.name)).into_response();
+    if let Some(dims) = query_request.dimensions {
+        for dim_name in dims {
+            if let Some(dim) = full_block_definition.dimensions.iter().find(|d| d.name == dim_name) {
+                requested_dimensions.push(dim.clone());
+            } else {
+                return (StatusCode::BAD_REQUEST, format!("Dimension '{}' not found in block '{}'", dim_name, query_request.name)).into_response();
+            }
         }
     }
 
     let mut requested_measures = Vec::new();
-    for measure_name in query_request.measures {
-        if let Some(measure) = full_block_definition.measures.iter().find(|m| m.name == measure_name) {
-            requested_measures.push(measure.clone());
-        } else {
-            return (StatusCode::BAD_REQUEST, format!("Measure '{}' not found in block '{}'", measure_name, query_request.name)).into_response();
+    if let Some(meas) = query_request.measures {
+        for measure_name in meas {
+            if let Some(measure) = full_block_definition.measures.iter().find(|m| m.name == measure_name) {
+                requested_measures.push(measure.clone());
+            } else {
+                return (StatusCode::BAD_REQUEST, format!("Measure '{}' not found in block '{}'", measure_name, query_request.name)).into_response();
+            }
         }
     }
 
@@ -87,26 +95,34 @@ async fn query_handler(
     (StatusCode::OK, Json(data)).into_response()
 }
 
-async fn get_blocks_handler(State(blocks): State<HashMap<String, Block>>) -> impl IntoResponse {
+async fn get_blocks_handler(State(blocks_state): State<Arc<RwLock<HashMap<String, Block>>>>) -> impl IntoResponse {
+    let blocks = blocks_state.read().unwrap();
     let block_names: Vec<String> = blocks.keys().cloned().collect();
     (StatusCode::OK, Json(block_names)).into_response()
 }
 
 async fn get_block_description_handler(
     Path(block_name): Path<String>,
-    State(blocks): State<HashMap<String, Block>>,
+    State(blocks_state): State<Arc<RwLock<HashMap<String, Block>>>>,
 ) -> impl IntoResponse {
+    let blocks = blocks_state.read().unwrap();
     let block = match blocks.get(&block_name) {
-        Some(b) => b,
+        Some(b) => b.clone(),
         None => return (StatusCode::NOT_FOUND, "Block not found".to_string()).into_response(),
     };
     (StatusCode::OK, Json(block)).into_response()
 }
 
-pub fn create_router(blocks: HashMap<String, Block>) -> Router {
+async fn get_schema_handler(State(blocks_state): State<Arc<RwLock<HashMap<String, Block>>>>) -> impl IntoResponse {
+    let blocks = blocks_state.read().unwrap();
+    (StatusCode::OK, Json(blocks.clone())).into_response()
+}
+
+pub fn create_router(blocks: Arc<RwLock<HashMap<String, Block>>>) -> Router {
     Router::new()
         .route("/query", post(query_handler))
         .route("/blocks", get(get_blocks_handler))
-        .route("/blocks/:block_name", get(get_block_description_handler))
+        .route("/blocks/{block_name}", get(get_block_description_handler))
+        .route("/schema", get(get_schema_handler))
         .with_state(blocks)
 }

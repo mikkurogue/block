@@ -1,22 +1,39 @@
 use crate::schema::{Block, DataType};
 
 pub fn build_query(block: &Block) -> String {
-    let dimensions = block.dimensions.iter()
+    let mut select_fields = Vec::new();
+
+    let dimensions_sql = block.dimensions.iter()
         .map(|d| {
             match d.data_type {
                 DataType::Date => format!("toDate({}) AS {}", d.sql, d.name),
                 _ => format!("{} AS {}", d.sql, d.name),
             }
         })
-        .collect::<Vec<String>>().join(", ");
+        .collect::<Vec<String>>();
 
-    let measures = block.measures.iter()
+    if !dimensions_sql.is_empty() {
+        select_fields.extend(dimensions_sql);
+    }
+
+    let measures_sql = block.measures.iter()
         .map(|m| format!("{} AS {}", m.sql, m.name))
-        .collect::<Vec<String>>().join(", ");
+        .collect::<Vec<String>>();
 
-    let group_by = block.dimensions.iter()
-        .map(|d| d.sql.as_str())
-        .collect::<Vec<&str>>().join(", ");
+    if !measures_sql.is_empty() {
+        select_fields.extend(measures_sql);
+    }
 
-    format!("SELECT {}, {} FROM {} GROUP BY {}", dimensions, measures, block.name, group_by)
+    let select_clause = select_fields.join(", ");
+
+    let mut query = format!("SELECT {} FROM {}", select_clause, block.name);
+
+    if !block.dimensions.is_empty() {
+        let group_by = block.dimensions.iter()
+            .map(|d| d.sql.as_str())
+            .collect::<Vec<&str>>().join(", ");
+        query.push_str(&format!(" GROUP BY {}", group_by));
+    }
+
+    query
 }

@@ -23,3 +23,11 @@ name = "sales"
   [[block.measures]]
   name = "total_revenue"
   sql = "sum(price * quantity)"
+
+  [[block.measures]]
+  name = "total_count"
+  sql = "count(*)"
+
+  [[block.measures]]
+  name = "total_products"
+  sql = "count(product)"
